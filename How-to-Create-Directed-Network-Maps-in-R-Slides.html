@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>How to Create Directed Network Maps in R</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="AS d’Urso" />
+    <script src="How-to-Create-Directed-Network-Maps-in-R-Slides_files/header-attrs-2.9/header-attrs.js"></script>
+    <link rel="stylesheet" href="xaringan-themer.css" type="text/css" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, middle, inverse, title-slide
+
+# How to Create Directed Network Maps in R
+### AS d’Urso
+### 7/29/2021
+
+---
+
+
+
+
+&lt;style type="text/css"&gt;
+pre {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 100px;
+}
+&lt;/style&gt;
+
+# Directed Network Maps 
+
+Example of uses: 
+
+--
+
+- People are moving from one state to another--Charles Tiebout's 'Voting with Feet'
+
+--
+
+- Spread of COVID-19 across state lines 
+
+--
+
+- States sending money to other states 
+
+---
+![10.png](Figures/10.png)
+--- 
+---
+# Objectives 
+
+Overview of creating maps 
+
+--
+
+Overview of functions 
+
+--
+
+Creating directed network maps 
+
+---
+# Set-up 
+## Load Libraries
+`tidyverse` last
+
+
+```r
+library(maps)
+library(tools)
+library(lwgeom)
+library(ggspatial)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rgeos)
+library(sf)
+library(tidyverse)
+```
+
+---
+## Load Data 
+
+Here we are using the simulated data. For information and replication script for how this was created, see `State Money Simulated Data.R`.
+
+--
+
+If your data does not already include longitude and latitude of the state capitals, consider including them. The data `us_states_lonlat.txt` includes these.
+
+--
+
+```r
+state_sim &lt;- read_csv("Data/state_sim.csv")
+```
+
+---
+# Functions 
+
+[Functions](https://www.datacamp.com/community/tutorials/functions-in-r-a-tutorial?utm_source=adwords_ppc&amp;utm_campaignid=1565261270&amp;utm_adgroupid=67750485268&amp;utm_device=c&amp;utm_keyword=&amp;utm_matchtype=b&amp;utm_network=g&amp;utm_adpostion=&amp;utm_creative=295208661502&amp;utm_targetid=dsa-473406575675&amp;utm_loc_interest_ms=&amp;utm_loc_physical_ms=9021731&amp;gclid=CjwKCAjwo4mIBhBsEiwAKgzXOG1Gn4B75j8nOJwVX-SPYORXI6jpDyT35llOZ9VlqvAEG88ik-jIbRoCV0wQAvD_BwE#what) (click for helpful post on functions) are a 'set of instructions' 
+
+--
+
+Typically, we use functions that someone else has already created for us when coding, espeically in R 
+
+--
+
+But we are *special*; we want to create something new, something no one else has come up with before 
+
+--
+
+So we create 'user-defined functions'
+---
+## Components of Functions 
+
+Take the common function `mean`, if we use the help file, we see that `mean` is a function, comprised of arguments--conditions under which `mean` will work and instructions on how to work
+
+--
+
+&lt;div style="width:550px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/mean arg.png"/&gt;
+&lt;/div&gt;
+
+---
+## Components of Functions 
+
+Hence, functions take on the structure 
+
+
+```r
+function_name(argument_list)
+```
+
+--
+
+If you want to create your own
+
+
+```r
+function_name &lt;- function(argument_list){
+  component of argument
+}
+```
+
+---
+## Example Function 
+
+
+```r
+myFirstFun &lt;- function(n) {
+    # Compute the square of integer `n`
+    n * n
+}
+```
+
+--
+
+
+```r
+myFirstFun(10)
+```
+
+```
+## [1] 100
+```
+
+---
+## Functions for Directed Network Maps: State Coord
+
+The function `state_coord` will easily call either the longitude or latitude of the specified state. To use this function, use quotation marks to call the state (i.e. "Virginia") and specify whether the longitude or latitude of the state capital should be pulled (i.e. "lon").
+
+
+```r
+state_coord &lt;- function(state_name, lon_or_lat) {
+    state_sim %&gt;%
+        filter(money_from_state == state_name) %&gt;%
+        select(lon_or_lat) %&gt;%
+        as.matrix() %&gt;%
+        as.vector()
+}
+```
+
+---
+## Functions for Directed Network Maps: State Coord
+
+
+```r
+state_coord("Virginia", "lon")
+```
+
+```
+## [1] -77.43364
+```
+
+---
+## Functions for Directed Network Maps: State Money
+
+The function `state_money` will pull how much money the first specified state sent to the second specified state. If we would like to know how much money Virginia granted to Texas, we specify `state_money("Virginia", "Texas")`.
+
+
+```r
+state_money &lt;- function(state_from, state_to) {
+    state_sim %&gt;%
+        filter(money_from_state == state_from) %&gt;%
+        select(state_to) %&gt;%
+        as.matrix() %&gt;%
+        as.vector()
+}
+```
+
+---
+## Functions for Directed Network Maps: State Money
+
+
+```r
+state_money("Virginia", "Illinois")
+```
+
+```
+## [1] 0.9081633
+```
+
+---
+# Set up Maps 
+We want to establish our map data. In this case, we are focusing on the contiguous United States.
+
+--
+
+First, we are converting state data in map into a simple feature (`sf`) object, this helps project the simple state features. It is important to return the class as `sf` to be compatible with the library from which we are largely drawing to create these maps. 
+
+--
+
+
+```r
+states &lt;- st_as_sf(maps::map("state", plot = FALSE,
+    fill = TRUE))
+```
+
+--
+
+Then, we can get the centroid (center point of geographic element) of states.
+
+--
+
+
+```r
+states &lt;- cbind(states, st_coordinates(st_centroid(states)))
+```
+
+--
+
+Then, we make the state labels look nice... 
+
+
+```r
+states$ID &lt;- toTitleCase(states$ID)
+```
+
+---
+## Caveat 
+
+If we wish to also plot Alaska and Hawaii, we can use the maps from the package `rnaturalearth`. In this case, it is important to return the class as `sf` to be compatible with the library from which we are largely drawing to create these maps.
+
+
+```r
+all_states &lt;- ne_states(country = "united states of america",
+    returnclass = "sf")
+```
+
+---
+## Additional Data Points
+
+If there are certain points we want to focus on in the map, we can do this by creating an `sf` object that will easily layer on our map. 
+
+--
+
+In this case, I have selected the state capitals. 
+
+```r
+sites &lt;- st_as_sf(
+  data.frame(longitude = state_sim$lon,
+             latitude = state_sim$lat),
+  coords = c("longitude", "latitude"),
+  crs = 4326, #the projection we want to use
+  agr = "constant"
+)
+```
+
+---
+# Plot Maps
+
+Plotting maps with `sf` is pretty similar to using `ggplot`.
+
+---
+# Simple Maps: It's like `ggplot`
+
+If we use the `states` map data as our data, we see that the general structure of a simple map follows the `ggplot` grammar. Note that we must add `geom_sf()` as our map layer.  
+
+--
+
+```r
+states %&gt;%
+    ggplot() + geom_sf()
+```
+&lt;div style="width:550px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/1.png"/&gt;
+&lt;/div&gt;
+
+---
+## Simple Maps: It's like `ggplot`
+
+If we wish to change any element of the US map, we can do so within `geom_sf()`. In this case, we can color the entire map. 
+
+--
+
+```r
+states %&gt;%
+    ggplot() + geom_sf(fill = "antiquewhite1")
+```
+&lt;div style="width:550px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/2.png"/&gt;
+&lt;/div&gt;
+
+---
+## Adding Key Points 
+
+Recall that we created an `sf` data frame for our key places, or `sites`, of interest. In this case, it was of each state capital. Here, we can take that data frame and add the points to our map, again using `geom_sf`
+
+--
+
+```r
+states %&gt;%
+    ggplot() + geom_sf(fill = "antiquewhite1") + geom_sf(data = sites,
+    size = 2, shape = 16, color = "salmon4", alpha = 0.5)
+```
+&lt;div style="width:550px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/3.png"/&gt;
+&lt;/div&gt;
+
+---
+## Adding Key Points 
+We see that Alaska and Hawaii's capitals have been plotted in the correct places on the map, but there is no data for the state! Here is an example where we might want to use the full US map, instead of the contiguous United States. 
+
+&lt;div style="width:550px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/3.png"/&gt;
+&lt;/div&gt;
+
+---
+## Different projections
+Replace the `states` data with `all_states`. The states geography is also graphed! We must also specify the full map coordinates, zoomimg in enough for us to see. This takes a bit of trial and error (and googling). Here, we use the 2163 projection. 
+
+--
+
+```r
+all_states %&gt;%
+    ggplot() + geom_sf(fill = "antiquewhite1") + geom_sf(data = sites,
+    size = 2, shape = 16, color = "salmon4", alpha = 0.5) +
+    coord_sf(crs = st_crs(2163), xlim = c(-6e+06, 2500000))
+```
+---
+## Different projections
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/4.png"/&gt;
+&lt;/div&gt;
+
+---
+# Mapping Directed Networks
+
+Let's say we are interested in patterns between states. This could be state money sent to other states, migration patterns, or policy diffusion. This is done through specifying lines to and from different states. In order to do this, we use the function `geom_spatial_segment` from the package `ggspatial`. 
+
+
+```r
+states %&gt;%
+  ggplot() +
+  geom_sf(fill = "antiquewhite1") +
+  geom_spatial_segment(
+    aes(
+      #use our `state_coord` fx for state locations 
+      x = state_coord("Virginia", "lon"), 
+      y = state_coord("Virginia", "lat"),
+      xend = state_coord("Texas", "lon"),
+      yend = state_coord("Texas", "lat"),
+    ),
+    color = "tomato",
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  )
+```
+
+---
+## Mapping Directed Networks
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/5.png"/&gt;
+&lt;/div&gt;
+
+---
+### Repeat the Process 
+
+
+```r
+states %&gt;%
+    ggplot() + geom_sf(data = states, fill = "antiquewhite1") +
+    geom_spatial_segment(aes(x = state_coord("Virginia",
+        "lon"), y = state_coord("Virginia", "lat"),
+        xend = state_coord("Texas", "lon"), yend = state_coord("Texas",
+            "lat")), color = "tomato", crs = 4326,
+        arrow = grid::arrow(length = unit(0.15, "inches"))) +
+## HERE ##
+
+geom_spatial_segment(aes(x = state_coord("Washington",
+    "lon"), y = state_coord("Washington", "lat"), xend = state_coord("Texas",
+    "lon"), yend = state_coord("Texas", "lat"), ),
+    color = "tomato", crs = 4326, arrow = grid::arrow(length = unit(0.15,
+        "inches"))) +  "inches"))) +
+## HERE ##
+
+geom_spatial_segment(aes(x = state_coord("Illinois",
+    "lon"), y = state_coord("Illinois", "lat"), xend = state_coord("Virginia",
+    "lon"), yend = state_coord("Virginia", "lat")),
+    color = "tomato", crs = 4326, arrow = grid::arrow(length = unit(0.15,
+        "inches"))) +  "inches"))) +
+## HERE ##
+
+geom_spatial_segment(aes(x = state_coord("Michigan",
+    "lon"), y = state_coord("Michigan", "lat"), xend = state_coord("North Dakota",
+    "lon"), yend = state_coord("North Dakota", "lat")),
+    color = "tomato", crs = 4326, arrow = grid::arrow(length = unit(0.15,
+        "inches")))
+```
+
+---
+### Repeat the Process
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/6.png"/&gt;
+&lt;/div&gt;
+
+---
+### Spacing the Arrows 
+However, some of the arrow points bleed into each other. This is because we are using the specific capital coordinates each time. This part takes a bit of trial and error, but you can adjust the `geom_spatial_segments` to start slightly off from other arrows. This helps make the arrows each look more distinct from the other arrows. We could use `jitter` however, we general want to dictate how the arrows should be adjusted (e.g. moving the start of the VA to TX arrow slightly lower and the end point slightly to the right).
+
+---
+### Spacing the Arrows 
+
+
+```{r```{r}
+states %&gt;% 
+  ggplot() +
+  geom_sf(data = states, fill = "antiquewhite1") +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Virginia", "lon"),
+      y = state_coord("Virginia", "lat") - 0.5, #manual segment adjustment
+      xend = state_coord("Texas", "lon") + 0.5,
+      yend = state_coord("Texas", "lat")
+    ),
+    color = "tomato",
+    size = state_money("Virginia", "Texas"), #adding funds granted data using our function
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Washington", "lon"),
+      y = state_coord("Washington", "lat"),
+      xend = state_coord("Texas", "lon") - 0.5,
+      yend = state_coord("Texas", "lat"),
+    ),
+    color = "tomato",
+    size = state_money("Washington", "Texas"),
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Illinois", "lon"),
+      y = state_coord("Illinois", "lat"),
+      xend = state_coord("Virginia", "lon") - 1.5,
+      yend = state_coord("Virginia", "lat")
+    ),
+    color = "tomato",
+    size = state_money("Illinois", "Virginia"),
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Michigan", "lon"),
+      y = state_coord("Michigan", "lat"),
+      xend = state_coord("North Dakota", "lon"),
+      yend = state_coord("North Dakota", "lat") + 1.5
+    ),
+    color = "tomato",
+    size = state_money("Michigan", "North Dakota"),
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) 
+
+```, eval = F}
+states %&gt;% 
+  ggplot() +
+  geom_sf(data = states, fill = "antiquewhite1") +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Virginia", "lon"),
+      y = state_coord("Virginia", "lat") - 0.5, #manual segment adjustment
+      xend = state_coord("Texas", "lon") + 0.5,
+      yend = state_coord("Texas", "lat")
+    ),
+    color = "tomato",
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Washington", "lon"),
+      y = state_coord("Washington", "lat"),
+      xend = state_coord("Texas", "lon") - 0.5,
+      yend = state_coord("Texas", "lat"),
+    ),
+    color = "tomato",
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Illinois", "lon"),
+      y = state_coord("Illinois", "lat"),
+      xend = state_coord("Virginia", "lon") - 1.5,
+      yend = state_coord("Virginia", "lat")
+    ),
+    color = "tomato",
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Michigan", "lon"),
+      y = state_coord("Michigan", "lat"),
+      xend = state_coord("North Dakota", "lon"),
+      yend = state_coord("North Dakota", "lat") + 1.5
+    ),
+    color = "tomato",
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) 
+```
+
+---
+### Spacing the Arrows 
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/7.png"/&gt;
+&lt;/div&gt;
+
+--
+Not only can we specify the starting and ending points of the arrow, we can also indicate other information with arrow characteristics. For instance, we could assign line thickness to amount of money granted. In this case, thicker lines correspond to higher dollar values and thinner lines correspond to lower dollar values.
+
+---
+### Arrow Thickness (Corresponding to Data)
+
+
+```r
+states %&gt;% 
+  ggplot() +
+  geom_sf(data = states, fill = "antiquewhite1") +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Virginia", "lon"),
+      y = state_coord("Virginia", "lat") - 0.5,
+      xend = state_coord("Texas", "lon") + 0.5,
+      yend = state_coord("Texas", "lat")
+    ),
+    color = "tomato",
+    ##adding funds granted data using our function
+    size = state_money("Virginia", "Texas"), 
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Washington", "lon"),
+      y = state_coord("Washington", "lat"),
+      xend = state_coord("Texas", "lon") - 0.5,
+      yend = state_coord("Texas", "lat"),
+    ),
+    color = "tomato",
+    size = state_money("Washington", "Texas"),
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Illinois", "lon"),
+      y = state_coord("Illinois", "lat"),
+      xend = state_coord("Virginia", "lon") - 1.5,
+      yend = state_coord("Virginia", "lat")
+    ),
+    color = "tomato",
+    size = state_money("Illinois", "Virginia"),
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) +
+  geom_spatial_segment(
+    aes(
+      x = state_coord("Michigan", "lon"),
+      y = state_coord("Michigan", "lat"),
+      xend = state_coord("North Dakota", "lon"),
+      yend = state_coord("North Dakota", "lat") + 1.5
+    ),
+    color = "tomato",
+    size = state_money("Michigan", "North Dakota"),
+    crs = 4326,
+    arrow = grid::arrow(length = unit(0.15, "inches"))
+  ) 
+```
+
+---
+### Arrow Thickness (Corresponding to Data)
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/8.png"/&gt;
+&lt;/div&gt;
+
+---
+### Labeling Directed Networks
+Next, we want to add the labels. There are a number of ways to accomplish this. One could set the label to be in the middle--geographically--of the line segment. It could also be at the beginning or at the ending point of the line segment. In this example, I place them at the beginning. 
+
+--
+
+As with `geom_line_segment`, in `geom_lable`, we specify the x and y coordinates of where we want the label to be. Since I wish for it to be at the start of the directed network (i.e. the state the money is coming from), I select the coordinates of the state sending the money. If you wanted to place the label in between the states, you could take the average longitude and latitude coordinates between the starting and end points and use those as your x and y values. 
+
+---
+### Labeling Directed Networks
+Again, I manually adjust the longitude and latitude of the labels for ease of interpretation. This takes a bit of trial and error. 
+
+
+```r
+(...)
+  ## LABEL HERE ##
+  geom_label(aes(
+    label = "$1.13 VA to TX", #what the label should say
+    x = state_coord("Virginia", "lon") + 4, #manual label adjustment
+    y = state_coord("Virginia", "lat")
+  ), size = 2.5) +
+  geom_label(aes(
+    label = "$2.38 WA to TX",
+    x = state_coord("Washington", "lon") + 0.5,
+    y = state_coord("Washington", "lat") + 1
+  ), size = 2.5) +
+  geom_label(aes(
+    label = "$2.01 IL to VA",
+    x = state_coord("Illinois", "lon")-4,
+    y = state_coord("Illinois", "lat")
+  ), size = 2.5) +
+  geom_label(aes(
+    label = "$0.99 MI to ND",
+    x = state_coord("Michigan", "lon") + 4,
+    y = state_coord("Michigan", "lat") + 0.5
+  ), size = 2.5) 
+```
+
+---
+### Labeling Directed Networks
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/9.png"/&gt;
+&lt;/div&gt;
+
+---
+### Plot Features
+We will clean up the plot. We can remove the x and y axis in this case, because it is clear that they are for longitude and latitude. We can also remove the tick marks associated with the longitude and latitudes. Moreover, we can add a color to the back panel. Lastly, we can include a title for the map.
+
+---
+### Plot Features
+
+```r
+(...)
+## ADJUST THEME ##
+theme(panel.background = element_rect(fill = "aliceblue"),
+    panel.border = element_rect(fill = NA)) + theme(axis.title = element_blank(),
+    axis.text = element_blank(), axis.ticks = element_blank()) +
+    ggtitle("Medical Relief Granted per Million Dollars")
+```
+
+---
+# Final Map!
+&lt;div style="width:600px; margin:0 auto"&gt; 
+&lt;img class="fragment" src="Figures/10.png"/&gt;
+&lt;/div&gt;
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create();
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
